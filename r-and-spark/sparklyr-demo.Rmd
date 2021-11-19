@@ -1,0 +1,129 @@
+---
+title: "dplyr demo"
+output: html_notebook
+---
+
+```{r setup,  include = FALSE}
+library(dplyr)
+library(arrow)
+library(sparklyr)
+```
+
+```{r, eval = FALSE}
+download.file(
+  "https://s3.amazonaws.com/nyc-tlc/trip+data/yellow_tripdata_2020-01.csv",
+  here::here("taxi.csv"),
+  mode = "wb"
+)
+```
+
+https://therinspark.com/starting.html#starting-prerequisites
+
+```{r}
+library(sparklyr)
+```
+
+```{r, eval = FALSE}
+spark_install()
+```
+
+```{r}
+sc <- spark_connect("local")
+```
+
+```{r}
+taxi_spark <- spark_read_csv(sc, "taxi", "taxi.csv")
+```
+
+```{r}
+taxi_spark
+```
+
+```{r}
+glimpse(taxi_spark)
+```
+```{r}
+taxi_spark %>% 
+  filter(tpep_pickup_datetime == max(tpep_pickup_datetime)) %>% 
+  head(1) %>% 
+  pull(tpep_pickup_datetime)
+```
+
+
+```{r}
+taxi_spark %>% 
+  group_by(VendorID) %>% 
+  summarise(
+    count = n(),
+    avg_fare = mean(fare_amount, na.rm = TRUE)
+  ) 
+```
+```{r}
+totals_by_vendor <- taxi_spark %>% 
+  group_by(VendorID) %>% 
+  summarise(
+    count = n(),
+    avg_fare = mean(fare_amount, na.rm = TRUE)
+  ) 
+
+```
+
+```{r}
+totals_by_vendor
+```
+
+```{r}
+totals_local <- totals_by_vendor %>% 
+  collect()
+```
+
+```{r}
+library(ggplot2)
+
+totals_local %>% 
+  ggplot() +
+  geom_col(aes(VendorID, count))
+```
+
+```{r}
+taxi_spark %>% 
+  ml_corr(columns = c("trip_distance", "fare_amount", "tip_amount", "extra"))
+```
+```{r}
+taxi_partitions <- taxi_spark %>% 
+  sdf_random_split(training = 0.7, test = 0.3, seed = 100)
+```
+
+```{r}
+lm_model <- taxi_partitions$training %>% 
+  ml_linear_regression(tip_amount ~ trip_distance)
+```
+
+```{r}
+preds <- ml_predict(lm_model, taxi_partitions$test)
+```
+
+```{r}
+library(yardstick)
+```
+
+```{r}
+preds %>% 
+  select(tip_amount, prediction) %>% 
+  sample_n(4000) %>% 
+  collect() %>% 
+  metrics(
+    truth = tip_amount,
+    estimate = prediction
+  )
+```
+```{r}
+ml_regression_evaluator(preds, label_col = "tip_amount")
+```
+ 
+
+
+```{r}
+spark_disconnect(sc)
+```
+
